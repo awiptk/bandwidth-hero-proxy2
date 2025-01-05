@@ -1,63 +1,100 @@
-const pick = require("../util/pick"),
-  fetch = require("node-fetch"),
-  shouldCompress = require("../util/shouldCompress"),
-  compress = require("../util/compress"),
-  DEFAULT_QUALITY = 40;
-exports.handler = async (e, t) => {
-  let { url: r } = e.queryStringParameters,
-    { jpeg: s, bw: o, l: a } = e.queryStringParameters;
-  if (!r)
-    return { statusCode: 200, body: "Bandwidth Hero Data Compression Service" };
-  try {
-    r = JSON.parse(r);
-  } catch {}
-  Array.isArray(r) && (r = r.join("&url=")),
-    (r = r.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, "http://"));
-  let d = !s,
-    n = 0 != o,
-    i = parseInt(a, 10) || 40;
-  try {
-    let h = {},
-      { data: c, type: l } = await fetch(r, {
-        headers: {
-          ...pick(e.headers, ["cookie", "dnt", "referer"]),
-          "user-agent": "Bandwidth-Hero Compressor",
-          "x-forwarded-for": e.headers["x-forwarded-for"] || e.ip,
-          via: "1.1 bandwidth-hero",
-        },
-      }).then(async (e) =>
-        e.ok
-          ? ((h = e.headers),
-            {
-              data: await e.buffer(),
-              type: e.headers.get("content-type") || "",
-            })
-          : { statusCode: e.status || 302 },
-      ),
-      p = c.length;
-    if (!shouldCompress(l, p, d))
-      return (
-        console.log("Bypassing... Size: ", c.length),
-        {
-          statusCode: 200,
-          body: c.toString("base64"),
-          isBase64Encoded: !0,
-          headers: { "content-encoding": "identity", ...h },
-        }
-      );
-    {
-      let { err: u, output: y, headers: g } = await compress(c, d, n, i, p);
-      if (u) throw (console.log("Conversion failed: ", r), u);
-      console.log(`From ${p}, Saved: ${(p - y.length) / p}%`);
-      let $ = y.toString("base64");
-      return {
-        statusCode: 200,
-        body: $,
-        isBase64Encoded: !0,
-        headers: { "content-encoding": "identity", ...h, ...g },
-      };
+const pick = require("../util/pick");
+const fetch = require("node-fetch");
+const shouldCompress = require("../util/shouldCompress");
+const compress = require("../util/compress");
+
+const DEFAULT_QUALITY = 85;
+const MAX_WIDTH = 300;
+
+exports.handler = async (event, context) => {
+    let { url } = event.queryStringParameters;
+    const { jpeg, bw, l } = event.queryStringParameters;
+
+    if (!url) {
+        return {
+            statusCode: 200,
+            body: "bandwidth-hero-proxy"
+        };
     }
-  } catch (f) {
-    return console.error(f), { statusCode: 500, body: f.message || "" };
-  }
-};
+
+    try {
+        url = JSON.parse(url);  // if simple string, then will remain so 
+    } catch { }
+
+    if (Array.isArray(url)) {
+        url = url.join("&url=");
+    }
+
+    // by now, url is a string
+    url = url.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, "http://");
+
+    const webp = !jpeg;
+    const grayscale = false;
+    const quality = parseInt(l, 10) || DEFAULT_QUALITY;
+
+    try {
+        let response_headers = {};
+        const { data, type: originType } = await fetch(url, {
+            headers: {
+                ...pick(event.headers, ['cookie', 'dnt', 'referer']),
+                'user-agent': 'Bandwidth-Hero Compressor',
+                'x-forwarded-for': event.headers['x-forwarded-for'] || event.ip,
+                via: '1.1 bandwidth-hero'
+            }
+        }).then(async res => {
+            if (!res.ok) {
+                return {
+                    statusCode: res.status || 302
+                }
+            }
+
+            response_headers = res.headers;
+            return {
+                data: await res.buffer(),
+                type: res.headers.get("content-type") || ""
+            }
+        })
+
+        const originSize = data.length;
+
+        if (shouldCompress(originType, originSize, webp)) {
+            // Tambahkan parameter MAX_WIDTH untuk membatasi lebar gambar
+            const { err, output, headers } = await compress(data, webp, grayscale, quality, originSize, MAX_WIDTH);   
+
+            if (err) {
+                console.log("Conversion failed: ", url);
+                throw err;
+            }
+
+            console.log(`From ${originSize}, Saved: ${(originSize - output.length)/originSize}%`);
+            const encoded_output = output.toString('base64');
+            return {
+                statusCode: 200,
+                body: encoded_output,
+                isBase64Encoded: true,
+                headers: {
+                    "content-encoding": "identity",
+                    ...response_headers,
+                    ...headers
+                }
+            }
+        } else {
+            console.log("Bypassing... Size: " , data.length);
+            return {    // bypass
+                statusCode: 200,
+                body: data.toString('base64'),
+                isBase64Encoded: true,
+                headers: {
+                    "content-encoding": "identity",
+                    ...response_headers,
+                }
+            }
+        }
+    } catch (err) {
+        console.error(err);
+        return {
+            statusCode: 500,
+            body: err.message || ""
+        }
+    }
+}
