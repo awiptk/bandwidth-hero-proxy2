@@ -1,24 +1,34 @@
-// Compresses an image using Sharp library
 const sharp = require("sharp");
 
-function compress(imagePath, useWebp, grayscale, quality, originalSize) {
-  let format = useWebp ? "webp" : "jpeg";
+function compress(input, webp, grayscale, quality, originSize, maxWidth) {
+    const format = "jpeg";
 
-  return sharp(imagePath)
-    .grayscale(grayscale)
-    .toFormat(format, { quality, progressive: true, optimizeScans: true })
-    .toBuffer({ resolveWithObject: true })
-    .then(({ data, info }) => ({
-      err: null,
-      headers: {
-        "content-type": `image/${format}`,
-        "content-length": info.size,
-        "x-original-size": originalSize,
-        "x-bytes-saved": originalSize - info.size,
-      },
-      output: data,
-    }))
-    .catch((err) => ({ err }));
+    // Kompres dan resize gabar, atur lebar maksimum menjadi 200px
+    return sharp(input)
+        .resize({ width: maxWidth })  // Resize gambar dengan lebar maksimum 200px, menjaga aspek rasio
+        .grayscale(grayscale)
+        .toFormat(format, {
+            quality: quality,  // Kualitas kompresi yang diterima dari `index.js`
+            progressive: true,
+            optimizeScans: true
+        })
+        .toBuffer({ resolveWithObject: true })
+        .then(({ data: output, info }) => {
+            return {
+                err: null,
+                headers: {
+                    "content-type": `image/${format}`,
+                    "content-length": info.size,
+                    "x-original-size": originSize,
+                    "x-bytes-saved": originSize - info.size,
+                },
+                output: output
+            };
+        }).catch(err => {
+            return {
+                err: err
+            };
+        });
 }
 
 module.exports = compress;
