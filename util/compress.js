@@ -1,34 +1,30 @@
-const sharp = require("sharp");
+const sharp = require('sharp');
 
-function compress(input, webp, grayscale, quality, originSize, maxWidth) {
-    const format = "jpeg";
+exports.compress = async (buffer, webp, grayscale, quality, originSize, maxWidth) => {
+  try {
+    let transformer = sharp(buffer)
+      .rotate()
+      .resize({ width: maxWidth, withoutEnlargement: true });
 
-    // Kompres dan resize gabar, atur lebar maksimum menjadi 200px
-    return sharp(input)
-        .resize({ width: maxWidth })  // Resize gambar dengan lebar maksimum 200px, menjaga aspek rasio
-        .grayscale(grayscale)
-        .toFormat(format, {
-            quality: quality,  // Kualitas kompresi yang diterima dari `index.js`
-            progressive: true,
-            optimizeScans: true
-        })
-        .toBuffer({ resolveWithObject: true })
-        .then(({ data: output, info }) => {
-            return {
-                err: null,
-                headers: {
-                    "content-type": `image/${format}`,
-                    "content-length": info.size,
-                    "x-original-size": originSize,
-                    "x-bytes-saved": originSize - info.size,
-                },
-                output: output
-            };
-        }).catch(err => {
-            return {
-                err: err
-            };
-        });
-}
+    if (grayscale) {
+      transformer = transformer.grayscale();
+    }
 
-module.exports = compress;
+    transformer = webp
+      ? transformer.webp({ quality })
+      : transformer.jpeg({ quality });
+
+    const outputBuffer = await transformer.toBuffer();
+    const metadata = await sharp(outputBuffer).metadata();
+
+    const headers = {
+      'content-type': webp ? 'image/webp' : 'image/jpeg',
+      'cache-control': 'public, max-age=31536000',
+      'content-length': metadata.size.toString()
+    };
+
+    return { err: null, output: outputBuffer, headers };
+  } catch (err) {
+    return { err, output: null, headers: {} };
+  }
+};
