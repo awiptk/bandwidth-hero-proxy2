@@ -1,100 +1,48 @@
-const pick = require("../util/pick");
-const fetch = require("node-fetch");
-const shouldCompress = require("../util/shouldCompress");
-const compress = require("../util/compress");
+const fetch = require('node-fetch');
+const { compress } = require('./compress');
 
-const DEFAULT_QUALITY = 80;
-const MAX_WIDTH = 400;
+exports.handler = async (event) => {
+  const { url, w, q } = event.queryStringParameters || {};
 
-exports.handler = async (event, context) => {
-    let { url } = event.queryStringParameters;
-    const { jpeg, bw, l } = event.queryStringParameters;
+  // Pastikan parameter w (width), q (quality), dan url valid
+  const maxWidth = parseInt(w, 10);
+  const quality = parseInt(q, 10);
 
-    if (!url) {
-        return {
-            statusCode: 200,
-            body: "bandwidth-hero-proxy"
-        };
-    }
+  if (!url || isNaN(maxWidth) || isNaN(quality)) {
+    return {
+      statusCode: 400,
+      body: 'Missing or invalid "url", "w" (width), or "q" (quality) parameter'
+    };
+  }
 
-    try {
-        url = JSON.parse(url);  // if simple string, then will remain so 
-    } catch { }
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Failed to fetch image: ${resp.status}`);
+    const data = await resp.buffer();
 
-    if (Array.isArray(url)) {
-        url = url.join("&url=");
-    }
+    const { err, output, headers } = await compress(
+      data,
+      true,        // webp
+      false,       // grayscale
+      quality,
+      data.length,
+      maxWidth
+    );
 
-    // by now, url is a string
-    url = url.replace(/http:\/\/1\.1\.\d\.\d\/bmi\/(https?:\/\/)?/i, "http://");
+    if (err) throw err;
 
-    const webp = !jpeg;
-    const grayscale = false;
-    const quality = parseInt(l, 10) || DEFAULT_QUALITY;
+    return {
+      statusCode: 200,
+      isBase64Encoded: true,
+      headers,
+      body: output.toString('base64')
+    };
 
-    try {
-        let response_headers = {};
-        const { data, type: originType } = await fetch(url, {
-            headers: {
-                ...pick(event.headers, ['cookie', 'dnt', 'referer']),
-                'user-agent': 'Bandwidth-Hero Compressor',
-                'x-forwarded-for': event.headers['x-forwarded-for'] || event.ip,
-                via: '1.1 bandwidth-hero'
-            }
-        }).then(async res => {
-            if (!res.ok) {
-                return {
-                    statusCode: res.status || 302
-                }
-            }
-
-            response_headers = res.headers;
-            return {
-                data: await res.buffer(),
-                type: res.headers.get("content-type") || ""
-            }
-        })
-
-        const originSize = data.length;
-
-        if (shouldCompress(originType, originSize, webp)) {
-            // Tambahkan parameter MAX_WIDTH untuk membatasi lebar gambar
-            const { err, output, headers } = await compress(data, webp, grayscale, quality, originSize, MAX_WIDTH);   
-
-            if (err) {
-                console.log("Conversion failed: ", url);
-                throw err;
-            }
-
-            console.log(`From ${originSize}, Saved: ${(originSize - output.length)/originSize}%`);
-            const encoded_output = output.toString('base64');
-            return {
-                statusCode: 200,
-                body: encoded_output,
-                isBase64Encoded: true,
-                headers: {
-                    "content-encoding": "identity",
-                    ...response_headers,
-                    ...headers
-                }
-            }
-        } else {
-            console.log("Bypassing... Size: " , data.length);
-            return {    // bypass
-                statusCode: 200,
-                body: data.toString('base64'),
-                isBase64Encoded: true,
-                headers: {
-                    "content-encoding": "identity",
-                    ...response_headers,
-                }
-            }
-        }
-    } catch (err) {
-        console.error(err);
-        return {
-            statusCode: 500,
-            body: err.message || ""
-        }
-    }
-}
+  } catch (err) {
+    console.error(err);
+    return {
+      statusCode: 500,
+      body: err.message || 'Internal Server Error'
+    };
+  }
+};
